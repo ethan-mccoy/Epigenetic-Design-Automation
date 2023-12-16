@@ -1,63 +1,42 @@
-from subprocess import call
-
-call('pip install importlib_metadata', shell=True)
-from importlib_metadata import version, PackageNotFoundError
-
-def install_packages():
-    REQUIRED_PACKAGES = [
-        'Bio',
-        'gdown',
-        'pandas',
-        'GEOparse'
-    ]
-
-    for package in REQUIRED_PACKAGES:
-        try:
-            dist_version = version(package)
-            print('{} ({}) is installed'.format(package, dist_version))
-        except PackageNotFoundError:
-            print('{} is NOT installed'.format(package))
-            call("pip install " + package, shell=True)
-
-
-
-class AutoEdit:
-    def __init__(self):
-        print('')
-
-    def find_oligos(self, gds_id, target_gsm_id, indicator_col, indicator_value, genes_of_interest):
-        print('Begin Running AutoEdit')
-
-        geo_processor = GEOProcessor()
-        target_finder = TargetFinder()
-        oligo_designer = OligoDesigner()
-
-        print('Downloading and filtering GDS')
-        filtered_gds = geo_processor.get_filtered_dataset(gds_id, indicator_col, indicator_value)
-        target_gsm = geo_processor.get_sample_dataset(target_gsm_id)
-
-        target_genes = target_finder.run(target_gsm, filtered_gds, genes_of_interest)
-        print('Found target genes:', target_genes)
-
-        oligos = oligo_designer.run(target_genes, target_gsm)
-        print('Found oligos:', oligos)
-
-        return oligos
-
+from Bio import Entrez
+from Bio import SeqIO
+import gdown
+import pandas as pd
+import GEOparse
+from dataclasses import dataclass
+import copy
 
 
 class GEOProcessor:
+    """A helper class for TargetFinder that processes GEO data"""
+
     def get_filtered_dataset(self, gds_id, indicator_col, indicator_value):
+        """
+        Input: GDS (Sample) ID, column to filter for (ex. 'disease state'), value to filter for (ex. 'uninvolved')
+        Returns: a pandas dataframe of the GDS dataset with only the indicated reference/control samples
+        """
         gds = GEOparse.get_GEO(geo = gds_id, destdir="./", silent = True)
-        filtered_gds_df = self.filter_GDS_by_indicator(gds, indicator_col, indicator_value) # Keep only the indicated control samples
+        std_gds_df = self.geo_with_gene_id(gds) 
+        filtered_gds_df = self.filter_GDS_by_indicator(gds, indicator_col, indicator_value)
+        filtered_gds_df = filtered_gds_df.merge(std_gds_df, on=['ID_REF', 'IDENTIFIER'], how='left')
         return filtered_gds_df
 
     def get_sample_dataset(self, gsm_id):
+        """
+        Input: GSM (Sample) ID
+        Returns: a pandas dataframe of the GSM dataset with gene IDs and expression values
+        """
         gsm = GEOparse.get_GEO(geo = gsm_id, destdir="./", silent = True)
         gsm_df = self.geo_with_gene_id(gsm)
         return gsm_df
 
     def geo_with_gene_id(self, geo):
+        """
+        Parses epigenetic data for standardization across datasets; finds the GEO's platform, converts probe IDs to gene IDs
+        Input: a GEOparse object (Sample or Dataset)
+        Returns: a pandas dataframe of the GEO object with gene IDs and expression values
+        """
+        #TODO: Make it smarter, remove all the if elses. Find a way to identify the title of the gene name column in each platform
         platform_column = 'platform_id' if 'platform_id' in geo.metadata else 'platform'
         platform_df = GEOparse.get_GEO(geo = geo.metadata[platform_column][0], destdir="./", silent = True).table
         geo_df = geo.table
@@ -114,65 +93,109 @@ class TargetFinder:
 
         return target_gene_to_methylation
 
-    def find_potential_genes_of_interest(self):
-        print('TODO')
+@dataclass()
+class EpigeneticConstruct:
+    # Plasmid backbone info
+    plasmid_name : str 
+    plasmid_methylation_type : str
+    contains_scaffold: bool
+    downstream_U6_sites: list        # Downstream of U6/T7 promoters / gRNA scaffold if present, but upstream of dCas9
+    upstream_promoter_sites: list     # Site for extra promoter control of Cas9
+    # Target gene info
+    target_gene : str 
+    target_gene_forward_oligo : str
+    target_gene_reverse_oligo : str
+    
 
 
 
 class OligoDesigner:
     def __init__(self):
-        print('')
+        Tet1 = EpigeneticConstruct('pdCas9-Tet1-CD', 'hypo', False, ['Acc65I', 'KpnI'], ['AarI', 'AgeI'], '', '', '')
+        p300 = EpigeneticConstruct('pcDNA-dCas9-p300 Core', 'hypo', False, ['ClaI', 'BspDI'], ['SacII'], '', '', '')
+        DNMT3A = EpigeneticConstruct('pdCas9-DNMT3A-EGFP', 'hyper', True, ['XbaI', 'Acc65I', 'KpnI'], ['AarI', 'AgeI'], '', '', '')
+        MQ1 = EpigeneticConstruct('pcDNA3.1-dCas9-MQ1(Q147L)-EGFP', 'hyper', False, ['EcoRV', 'NotI', 'XbaI'], [], '', '', '')
+        self.constructs = [Tet1, p300, DNMT3A, MQ1]
 
-    def run(self, target_genes, target_gsm_df):
+        self.restriction_sites = {
+            'EcoRI': 'GAATTC',
+            'BamHI': 'GGATCC',
+            'HindIII': 'AAGCTT',
+            'NotI': 'GCGGCCGC',
+            'XhoI': 'CTCGAG',
+            'EcoRV': 'GATATC',
+            'XbaI': 'TCTAGA',
+            'Acc65I': 'GGTACC',
+            'KpnI': 'GGTACC',
+            'AarI': 'CACCTGC',
+            'AgeI': 'ACCGGT',
+            'ClaI': 'ATCGAT',
+            'BspDI': 'ATCGAT',
+            'SacII': 'CCGCGG',
+        }
+
+    def run(self, genes_to_methylation, target_gsm_df):
+        target_genes = genes_to_methylation.keys()
+        self.target_gsm_df = target_gsm_df
+
+        id_to_seq = self.find_promoter_sequences(target_genes)
+        id_to_protospacer = self.find_protospacers(id_to_seq)
+        self.design_oligos(self.constructs, id_to_protospacer, genes_to_methylation)
+
+    def find_protospacers(self, id_to_seq, chopchop = False):
+        # Defaults to finding protospacers with G at 0 and A/T at 16
+        if chopchop == False:
+            sp = SequenceProcessor()
+            id_to_protospacers = {}
+            for id, seq in id_to_seq.items():
+                protospacers = sp.find_protospacers(seq)
+                id_to_protospacers[id] = protospacers
+                return id_to_protospacers
+        
+        elif chopchop == True:
+            id_to_protospacers = {}
+            #for id, seq in id_to_seq.items():
+                #TODO: Set up chopchop cmd line tool, many dependences
+
+    def find_promoter_sequences(self, target_genes):
         sp = SequenceProcessor()
-
-        # Find the promoter sequence of each target gene
         id_to_seq = {}
         for gene_id in target_genes:
-            gene_df = target_gsm_df[target_gsm_df['IDENTIFIER'] == gene_id]
-
+            gene_df = self.target_gsm_df[self.target_gsm_df['IDENTIFIER'] == gene_id]
             if ('DETECTION P-VALUE' in gene_df.columns):
                 present_transcript_id = gene_df.sort_values(by='DETECTION P-VALUE').iloc[0:1]['GB_ACC'].iloc[0]
             else:
                 present_transcript_id = gene_df.sort_values(by='Detection Pval').iloc[0:1]['GB_ACC'].iloc[0]
-
             promoter_seq = sp.get_promoter_sequence(present_transcript_id)
             id_to_seq[gene_id] = promoter_seq
+        return id_to_seq
 
-        # Find possible protospacers for each target promoter
-        id_to_protospacers = {}
-        for id, seq in id_to_seq.items():
-              protospacers = sp.find_protospacers(seq)
-              id_to_protospacers[id] = protospacers
+    def design_oligos(self, constructs, id_to_protospacer, genes_to_methylation): 
+        gene_to_constructs = {}
+        for gene, methylation in genes_to_methylation.items():
+            for construct in constructs:
+                if construct.plasmid_methylation_type == methylation:
+                    gRNA_scaffold = ''
+                    if construct.contains_scaffold == False:
+                        gRNA_scaffold = 'GTTTAAGAGCTATGCTGGAAACAGCATAGCAAGTTTAAATAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCTTTTTTT' 
 
-        # Design sgRNA oligos to address hyper/hypomethylation in each target gene
-        id_to_oligos = {}
-        for gene_id, methylation in target_genes.items():
-            protospacers = id_to_protospacers.get(gene_id)
+                    gene_construct = copy.deepcopy(construct)
+                    gene_construct.target_gene = gene
 
-            oligos = []
-            for protospacer in protospacers.values():
-                if methylation == 'hyper':
-                    oligos.append(self.design_Tet1_oligos(protospacer))
-                elif methylation == 'hypo':
-                    oligos.append(self.design_DNMT3A_oligos(protospacer))
+                    protospacer = id_to_protospacer[gene]
+                    restriction_site = gene_construct.downstream_U6_sites[0]
+                    restriction_seq = self.restriction_sites.get(restriction_site)
+                    restriction_seq_overhang = 'ataat' + restriction_seq
 
-            id_to_oligos[gene_id] = oligos
+                    gene_construct.target_gene_forward_oligo = str(restriction_seq_overhang) + str(protospacer) + str(gRNA_scaffold)
+                    gene_construct.target_gene_reverse_oligo = restriction_seq_overhang
 
-        return id_to_oligos
+                    if gene not in gene_to_constructs:
+                        gene_to_constructs[gene] = []
 
-    # U6 promoter and gRNA scaffold w/ MS2 binding sites is already on the plasmid
-    def design_Tet1_oligos(self, protospacer):
-        Acc65IPlus5 = 'ataatGGTACC'
-        forward_oligo = Acc65IPlus5 + protospacer
-        reverse_oligo = Acc65IPlus5
-        return (forward_oligo, reverse_oligo)
+                    gene_to_constructs[gene].append(gene_construct)
 
-    def design_DNMT3A_oligos(self, protospacer):
-        Acc65IPlus5 = 'ataatGGTACC'
-        forward_oligo = Acc65IPlus5 + protospacer
-        reverse_oligo = Acc65IPlus5
-        return (forward_oligo, reverse_oligo)
+        return gene_to_constructs
 
 
 class SequenceProcessor:
@@ -192,7 +215,7 @@ class SequenceProcessor:
             promoter_seq = seq[0 : promoter_end_pos]
 
             return promoter_seq
-
+        
         except Exception as e:
             print(f"Error fetching sequence for {refseq_id}: {str(e)}")
             return None
@@ -217,11 +240,6 @@ def psoriasis_test():
     indicator_value = 'uninvolved'
     genes_of_interest = ['ID4', 'CDKN2B', 'CDKN1A', 'CDKN2A']
 
-    ae = AutoEdit()
-    oligos = ae.find_oligos(gds_id, target_gsm_id, indicator_col, indicator_value, genes_of_interest)
-
-    return oligos
-
 def cocaine_test(): 
     gds_id = 'GDS5047' # cocaine brains dataset
     target_gsm_id = 'GSM1324896' # cocaine abuse sample
@@ -229,36 +247,109 @@ def cocaine_test():
     indicator_value = 'control'
     genes_of_interest = ['CDKN1A', 'CCL2', 'PVALB', 'SLC6A3']
 
+    
+def main():
+    Entrez.email = "ethanmccoy@example.com"  # Replace with your email
+    openAI_auth = ''
+
     geo_processor = GEOProcessor()
     target_finder = TargetFinder()
     oligo_designer = OligoDesigner()
 
-    ae = AutoEdit()
-    oligos = ae.find_oligos(gds_id, target_gsm_id, indicator_col, indicator_value, genes_of_interest)
+    print('What would you like to do? (enter an integer) \
+          \n 1. Design methylation-editing constructs \
+          \n 2. Automate robot with constructs')
+    choice = int(input())
+    while choice != 1 and choice != 2:
+        print("Error: Invalid input. Please try again.")
+        choice = int(input())
 
-    return oligos
-    
-def main():
-    install_packages()
-    from Bio import Entrez
-    from Bio import SeqIO
-    import gdown
-    import pandas as pd
-    import GEOparse
+    # Design methylation-editing constructs for a target epigenome
+    if choice == 1:
+        # Step 1. Get a target epigenome 
+        while True:
+            try: 
+                target_gsm_id = input("\n What GEO Sample would like to target? Enter a GSM id like GSM1324896: ")
+                target_gsm = geo_processor.get_sample_dataset(target_gsm_id)
+                break
+            except:
+                print("Not a valid GSM id. Please try again.")
 
-    Entrez.email = "ethanmccoy@example.com"  # Replace with your email
-    openAI_auth = ''
+        # Step 2. Get a reference epigenome 
+        print("\n What would you like to use as the reference epigenome? Enter an integer. \
+              \n 1. Make an average epigenetic profile of control samples from a GDS \
+              \n 2. Provide a specific reference GSM")
+        reference_choice = int(input())
+        while reference_choice != 1 and reference_choice != 2:
+            print("Error: Invalid input. Please try again.")
+            reference_choice = int(input())
 
-    print('Hi, whats your name?')
+        # Option 2a. Create a reference epigenome from an average of the control GSMs in a GDS
+        if reference_choice == 1:
+            print("\n What GEO Dataset would like like to explore? Enter a GDS id like GDS5047")
+            gds_id = input()
+            gds = GEOparse.get_GEO(geo = gds_id, destdir="./", silent = True)
 
-    name = input()
+            print('\n Columns for', gds_id, ':\n', gds.columns[0:2])
+            print("\n Choose one as your indicator column. Enter a string like agent or disease state")
+            indicator_col = str(input())
 
-    print('Hello', name)
+            print('\n Here are the values of', gds.columns[indicator_col].unique())
+            print("\n Choose your indicator value. Enter a string like control or uninvolved.")
+            indicator_value = str(input())
 
-    psoriasis_oligos = psoriasis_test()
+            filtered_gds = geo_processor.get_filtered_dataset(gds_id, indicator_col, indicator_value)
+            ref_values = filtered_gds[['ID_REF', 'IDENTIFIER']].copy()
+            ref_values['VALUE'] = filtered_gds.filter(regex='^GSM').mean(axis=1)
+
+        # Option 2b. Choose a reference epigenome from a single control GSM's epigenome. 
+        elif reference_choice == 2:
+            print("What reference GSM would you like to use? Enter a GSM id like GSM1324896")
+            reference_gsm_id = input()
+            reference_gsm = geo_processor.get_sample_dataset(reference_gsm_id)
+            reference_gsm = reference_gsm[reference_gsm['VALUE'].notna()]
+            ref_values = reference_gsm[['ID_REF', 'IDENTIFIER', 'VALUE']].copy()
+
+        # Step 3. Get the genes of interest
+        print("What genes would you like to target? \
+              \n 1. Manually input your target genes \
+              \n 2. Find potential genes of interest via differential methylation analysis on the reference and target epigenomes") 
+        target_genes_choice = int(input())
+        
+        # Option 3a. Manually input genes of interest
+        if target_genes_choice == 1:
+            print("Enter either a list of genes, or a dictionary of genes to their expected methylation in the target sample \
+                  \n If a list is provided, will estimate methylation by comparing target and reference methylation \
+                  \n Dict Example: {'ID4' : 'hyper', 'CDKN2B' : 'hypo', 'CDKN1A' : 'hypo', 'CDKN2A' : 'hypo'} \
+                  \n List Example: [ID4,CDKN2B,CDKN1A,CDKN2A] ")
+            genes_of_interest = input()
+
+            # Option 3ai. Input a dict of genes and expected (hyper/hypo) methylation (from papers)
+            if genes_of_interest[0] == '{':
+                genes_to_methylation = eval(genes_of_interest)
+
+            # Option 3aii. Input a list of genes and estimate methylation by comparing target and reference methylation
+            elif genes_of_interest[0] == '[':
+                genes_of_interest = genes_of_interest[1:-1].split(',')
+                tf = TargetFinder()
+                genes_to_methylation = tf.run(target_gsm, ref_values, genes_of_interest)
+                print(genes_to_methylation)
+
+
+        # Option 3b. Find potential genes of interest via differential methylation analysis across reference and target epigenomes
+        elif target_genes_choice == 2:
+            print("TODO: differential methylation analysis")
+
+
+        # Step 4. Create constructs for each target gene
+        od = OligoDesigner()
+        od.run(genes_to_methylation, target_gsm)
+
+
+
+    #psoriasis_oligos = psoriasis_test()
     #cocaine_oligos = cocaine_test()
-
-    print(psoriasis_oligos)
+    #print(psoriasis_oligos)
 
 if __name__ == '__main__':
     main()
