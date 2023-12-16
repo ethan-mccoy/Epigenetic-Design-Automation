@@ -6,21 +6,20 @@ import GEOparse
 from dataclasses import dataclass
 import copy
 
-
 class GEOProcessor:
     """A helper class for TargetFinder that processes GEO data"""
 
     def get_filtered_dataset(self, gds_id, indicator_col, indicator_value):
         """
-        Input: GDS (Sample) ID, column to filter for (ex. 'disease state'), value to filter for (ex. 'uninvolved')
-        Returns: a pandas dataframe of the GDS dataset with only the indicated reference/control samples
+        Input: GDS ID, column to filter, value to filter
+        Returns: a pandas dataframe of the GDS dataset with only the filtered/control samples
         """
         gds = GEOparse.get_GEO(geo = gds_id, destdir="./", silent = True)
         std_gds_df = self.geo_with_gene_id(gds) 
         filtered_gds_df = self.filter_GDS_by_indicator(gds, indicator_col, indicator_value)
         filtered_gds_df = filtered_gds_df.merge(std_gds_df, on=['ID_REF', 'IDENTIFIER'], how='left')
         return filtered_gds_df
-
+    
     def get_sample_dataset(self, gsm_id):
         """
         Input: GSM (Sample) ID
@@ -46,7 +45,6 @@ class GEOProcessor:
             geo_df['IDENTIFIER'] = geo_df.merge(platform_df, left_on='ID_REF', right_on='ID')['GENE_SYMBOL']
         elif ('ILMN_Gene' in platform_df.columns):
             geo_df['IDENTIFIER'] = geo_df.merge(platform_df, left_on='ID_REF', right_on='ID')['ILMN_Gene']
-
         geo_df['GB_ACC'] = geo_df.merge(platform_df, left_on='ID_REF', right_on='ID')['GB_ACC']
         return geo_df
 
@@ -54,25 +52,19 @@ class GEOProcessor:
         indicator = gds.columns
         epigenes = gds.table
         gsm_to_indicator = dict(zip(indicator.index, indicator[indicator_col]))
-
         indicated_cols = ['ID_REF', 'IDENTIFIER']
         for col, label in gsm_to_indicator.items():
             if label == indicator_value:
                 indicated_cols.append(col)
-
         indicated_df = epigenes[indicated_cols]
         return indicated_df
 
-
-
 class TargetFinder:
-    def __init__(self):
-        print('')
-
+    """ A class that helps find genes with different methylation levels between populations"""
     def run(self, target_gsm_df, control_gds_df, genes_of_interest):
         targets = self.find_targets(target_gsm_df, control_gds_df, genes_of_interest)
         return targets
-
+    
     def find_targets(self, target_sample, healthy_dataset, genes_of_interest):
         target_gene_to_methylation = {}
         for gene_id in genes_of_interest:
@@ -82,7 +74,6 @@ class TargetFinder:
             for i in range(len(sample_gene)):
                 healthy_mean = healthy_gene.iloc[i, 2:].mean().mean()
                 sample_value = sample_gene['VALUE'].iloc[i]
-
                 # If greater than 10 % difference add to list
                 percent_difference = abs((sample_value - healthy_mean) / healthy_mean) * 100
                 if percent_difference > 10:
@@ -90,7 +81,6 @@ class TargetFinder:
                         target_gene_to_methylation[gene_id] = 'hypo'
                     else:
                         target_gene_to_methylation[gene_id] = 'hyper'
-
         return target_gene_to_methylation
 
 @dataclass()
@@ -106,9 +96,6 @@ class EpigeneticConstruct:
     target_gene_forward_oligo : str
     target_gene_reverse_oligo : str
     
-
-
-
 class OligoDesigner:
     def __init__(self):
         Tet1 = EpigeneticConstruct('pdCas9-Tet1-CD', 'hypo', False, ['Acc65I', 'KpnI'], ['AarI', 'AgeI'], '', '', '')
@@ -116,7 +103,6 @@ class OligoDesigner:
         DNMT3A = EpigeneticConstruct('pdCas9-DNMT3A-EGFP', 'hyper', True, ['XbaI', 'Acc65I', 'KpnI'], ['AarI', 'AgeI'], '', '', '')
         MQ1 = EpigeneticConstruct('pcDNA3.1-dCas9-MQ1(Q147L)-EGFP', 'hyper', False, ['EcoRV', 'NotI', 'XbaI'], [], '', '', '')
         self.constructs = [Tet1, p300, DNMT3A, MQ1]
-
         self.restriction_sites = {
             'EcoRI': 'GAATTC',
             'BamHI': 'GGATCC',
@@ -137,13 +123,12 @@ class OligoDesigner:
     def run(self, genes_to_methylation, target_gsm_df):
         target_genes = genes_to_methylation.keys()
         self.target_gsm_df = target_gsm_df
-
         id_to_seq = self.find_promoter_sequences(target_genes)
         id_to_protospacer = self.find_protospacers(id_to_seq)
         self.design_oligos(self.constructs, id_to_protospacer, genes_to_methylation)
 
     def find_protospacers(self, id_to_seq, chopchop = False):
-        # Defaults to finding protospacers with G at 0 and A/T at 16
+        # Protospacers with G at 0 and A/T at 16
         if chopchop == False:
             sp = SequenceProcessor()
             id_to_protospacers = {}
@@ -151,7 +136,6 @@ class OligoDesigner:
                 protospacers = sp.find_protospacers(seq)
                 id_to_protospacers[id] = protospacers
                 return id_to_protospacers
-        
         elif chopchop == True:
             id_to_protospacers = {}
             #for id, seq in id_to_seq.items():
@@ -178,10 +162,8 @@ class OligoDesigner:
                     gRNA_scaffold = ''
                     if construct.contains_scaffold == False:
                         gRNA_scaffold = 'GTTTAAGAGCTATGCTGGAAACAGCATAGCAAGTTTAAATAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCTTTTTTT' 
-
                     gene_construct = copy.deepcopy(construct)
                     gene_construct.target_gene = gene
-
                     protospacer = id_to_protospacer[gene]
                     restriction_site = gene_construct.downstream_U6_sites[0]
                     restriction_seq = self.restriction_sites.get(restriction_site)
@@ -189,33 +171,25 @@ class OligoDesigner:
 
                     gene_construct.target_gene_forward_oligo = str(restriction_seq_overhang) + str(protospacer) + str(gRNA_scaffold)
                     gene_construct.target_gene_reverse_oligo = restriction_seq_overhang
-
                     if gene not in gene_to_constructs:
                         gene_to_constructs[gene] = []
-
                     gene_to_constructs[gene].append(gene_construct)
-
         return gene_to_constructs
-
 
 class SequenceProcessor:
     def get_promoter_sequence(self, refseq_id):
+        """Attempts to find the promoter sequence of a gene from NCBI given its refseq id"""
         try:
-            # Fetch the sequence data from NCBI
             handle = Entrez.efetch(db="nucleotide", id=refseq_id, rettype="gb", retmode="text")
             record = SeqIO.read(handle, "genbank")
             handle.close()
-
             promoter_end_pos = 300 # Default if no CDS listed
             for feature in record.features:
                 if feature.type == "CDS":
                     promoter_end_pos = feature.location.start
-
             seq = record.seq
             promoter_seq = seq[0 : promoter_end_pos]
-
             return promoter_seq
-        
         except Exception as e:
             print(f"Error fetching sequence for {refseq_id}: {str(e)}")
             return None
@@ -229,9 +203,87 @@ class SequenceProcessor:
                 protospacer = str(protospacer) # Removes seq object
                 if protospacer[0] == 'G' and (protospacer[16] == 'A' or protospacer[16] == 'T'):
                     pam_sites[i] = protospacer.lower()
-
         return pam_sites
-    
+
+# TODO: Add pickling and file management
+def main():
+    Entrez.email = "ethanmccoy@example.com" 
+    geo_processor = GEOProcessor()
+    target_finder = TargetFinder()
+    oligo_designer = OligoDesigner()
+
+    # Step 1. Get a target epigenome 
+    while True:
+        try: 
+            target_gsm_id = input("\n Enter a target GSM id like GSM1324896: ")
+            target_gsm = geo_processor.get_sample_dataset(target_gsm_id)
+            break
+        except:
+            print("Not a valid GSM id. Please try again.")
+
+    # Step 2. Get a reference / control epigenome 
+    print("\n Enter 1 or 2. \
+            \n 1. Make an average methylation profile of control samples from a GDS \
+            \n 2. Provide a specific reference GSM")
+    reference_choice = int(input())
+    while reference_choice != 1 and reference_choice != 2:
+        print("Error: Invalid input. Please try again.")
+        reference_choice = int(input())
+
+    # Reference methylation from an average of the control GSMs in a GDS
+    if reference_choice == 1:
+        print("\n Enter a GEO Dataset id like GDS5047")
+        gds_id = input()
+        gds = GEOparse.get_GEO(geo = gds_id, destdir="./", silent = True)
+        print('\n Columns for', gds_id, ':\n', gds.columns[0:2])
+        print("\n Choose one as your indicator column. Enter a string like agent or disease state")
+        indicator_col = str(input())
+        print('\n Here are the values of', gds.columns[indicator_col].unique())
+        print("\n Choose your indicator value. Enter a string like control or uninvolved.")
+        indicator_value = str(input())
+        filtered_gds = geo_processor.get_filtered_dataset(gds_id, indicator_col, indicator_value)
+        ref_values = filtered_gds[['ID_REF', 'IDENTIFIER']].copy()
+        ref_values['VALUE'] = filtered_gds.filter(regex='^GSM').mean(axis=1)
+    # Reference methylation from a single GSM. 
+    elif reference_choice == 2:
+        print("Enter a reference GSM id like GSM1324896")
+        reference_gsm_id = input()
+        reference_gsm = geo_processor.get_sample_dataset(reference_gsm_id)
+        reference_gsm = reference_gsm[reference_gsm['VALUE'].notna()]
+        ref_values = reference_gsm[['ID_REF', 'IDENTIFIER', 'VALUE']].copy()
+
+    # Step 3. Target genes
+    print("Choose how to find target genes \
+            \n 1. Manually input your target genes \
+            \n 2. Find potential genes of interest via differential methylation analysis on the reference and target epigenomes") 
+    target_genes_choice = int(input())
+    if target_genes_choice == 1:
+        print("Enter a list or a dict w/ known methylation \
+                \n If list, will estimate methylation \
+                \n Dict Example: {'ID4' : 'hyper', 'CDKN2B' : 'hypo', 'CDKN1A' : 'hypo', 'CDKN2A' : 'hypo'} \
+                \n List Example: [ID4,CDKN2B,CDKN1A,CDKN2A] ")
+        genes_of_interest = input()
+        # Dict
+        if genes_of_interest[0] == '{':
+            genes_to_methylation = eval(genes_of_interest)
+        # List
+        elif genes_of_interest[0] == '[':
+            genes_of_interest = genes_of_interest[1:-1].split(',')
+            genes_to_methylation = target_finder.run(target_gsm, ref_values, genes_of_interest)
+            print(genes_to_methylation)
+
+    # Option 3b. Find potential genes of interest via differential methylation analysis across reference and target epigenomes
+    elif target_genes_choice == 2:
+        print("TODO: differential methylation analysis")
+
+    # Step 4. Create constructs for target genes
+    oligo_designer.run(genes_to_methylation, target_gsm)
+
+if __name__ == '__main__':
+    main()
+
+
+
 
 def psoriasis_test(): 
     gds_id = 'GDS2518' # Plaque psoriasis dataset
@@ -246,110 +298,3 @@ def cocaine_test():
     indicator_col = 'agent'
     indicator_value = 'control'
     genes_of_interest = ['CDKN1A', 'CCL2', 'PVALB', 'SLC6A3']
-
-    
-def main():
-    Entrez.email = "ethanmccoy@example.com"  # Replace with your email
-    openAI_auth = ''
-
-    geo_processor = GEOProcessor()
-    target_finder = TargetFinder()
-    oligo_designer = OligoDesigner()
-
-    print('What would you like to do? (enter an integer) \
-          \n 1. Design methylation-editing constructs \
-          \n 2. Automate robot with constructs')
-    choice = int(input())
-    while choice != 1 and choice != 2:
-        print("Error: Invalid input. Please try again.")
-        choice = int(input())
-
-    # Design methylation-editing constructs for a target epigenome
-    if choice == 1:
-        # Step 1. Get a target epigenome 
-        while True:
-            try: 
-                target_gsm_id = input("\n What GEO Sample would like to target? Enter a GSM id like GSM1324896: ")
-                target_gsm = geo_processor.get_sample_dataset(target_gsm_id)
-                break
-            except:
-                print("Not a valid GSM id. Please try again.")
-
-        # Step 2. Get a reference epigenome 
-        print("\n What would you like to use as the reference epigenome? Enter an integer. \
-              \n 1. Make an average epigenetic profile of control samples from a GDS \
-              \n 2. Provide a specific reference GSM")
-        reference_choice = int(input())
-        while reference_choice != 1 and reference_choice != 2:
-            print("Error: Invalid input. Please try again.")
-            reference_choice = int(input())
-
-        # Option 2a. Create a reference epigenome from an average of the control GSMs in a GDS
-        if reference_choice == 1:
-            print("\n What GEO Dataset would like like to explore? Enter a GDS id like GDS5047")
-            gds_id = input()
-            gds = GEOparse.get_GEO(geo = gds_id, destdir="./", silent = True)
-
-            print('\n Columns for', gds_id, ':\n', gds.columns[0:2])
-            print("\n Choose one as your indicator column. Enter a string like agent or disease state")
-            indicator_col = str(input())
-
-            print('\n Here are the values of', gds.columns[indicator_col].unique())
-            print("\n Choose your indicator value. Enter a string like control or uninvolved.")
-            indicator_value = str(input())
-
-            filtered_gds = geo_processor.get_filtered_dataset(gds_id, indicator_col, indicator_value)
-            ref_values = filtered_gds[['ID_REF', 'IDENTIFIER']].copy()
-            ref_values['VALUE'] = filtered_gds.filter(regex='^GSM').mean(axis=1)
-
-        # Option 2b. Choose a reference epigenome from a single control GSM's epigenome. 
-        elif reference_choice == 2:
-            print("What reference GSM would you like to use? Enter a GSM id like GSM1324896")
-            reference_gsm_id = input()
-            reference_gsm = geo_processor.get_sample_dataset(reference_gsm_id)
-            reference_gsm = reference_gsm[reference_gsm['VALUE'].notna()]
-            ref_values = reference_gsm[['ID_REF', 'IDENTIFIER', 'VALUE']].copy()
-
-        # Step 3. Get the genes of interest
-        print("What genes would you like to target? \
-              \n 1. Manually input your target genes \
-              \n 2. Find potential genes of interest via differential methylation analysis on the reference and target epigenomes") 
-        target_genes_choice = int(input())
-        
-        # Option 3a. Manually input genes of interest
-        if target_genes_choice == 1:
-            print("Enter either a list of genes, or a dictionary of genes to their expected methylation in the target sample \
-                  \n If a list is provided, will estimate methylation by comparing target and reference methylation \
-                  \n Dict Example: {'ID4' : 'hyper', 'CDKN2B' : 'hypo', 'CDKN1A' : 'hypo', 'CDKN2A' : 'hypo'} \
-                  \n List Example: [ID4,CDKN2B,CDKN1A,CDKN2A] ")
-            genes_of_interest = input()
-
-            # Option 3ai. Input a dict of genes and expected (hyper/hypo) methylation (from papers)
-            if genes_of_interest[0] == '{':
-                genes_to_methylation = eval(genes_of_interest)
-
-            # Option 3aii. Input a list of genes and estimate methylation by comparing target and reference methylation
-            elif genes_of_interest[0] == '[':
-                genes_of_interest = genes_of_interest[1:-1].split(',')
-                tf = TargetFinder()
-                genes_to_methylation = tf.run(target_gsm, ref_values, genes_of_interest)
-                print(genes_to_methylation)
-
-
-        # Option 3b. Find potential genes of interest via differential methylation analysis across reference and target epigenomes
-        elif target_genes_choice == 2:
-            print("TODO: differential methylation analysis")
-
-
-        # Step 4. Create constructs for each target gene
-        od = OligoDesigner()
-        od.run(genes_to_methylation, target_gsm)
-
-
-
-    #psoriasis_oligos = psoriasis_test()
-    #cocaine_oligos = cocaine_test()
-    #print(psoriasis_oligos)
-
-if __name__ == '__main__':
-    main()
