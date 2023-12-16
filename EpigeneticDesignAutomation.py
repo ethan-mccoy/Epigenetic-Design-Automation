@@ -14,7 +14,7 @@ class GEOProcessor:
         Input: GDS ID, column to filter, value to filter
         Returns: a pandas dataframe of the GDS dataset with only the filtered/control samples
         """
-        gds = GEOparse.get_GEO(geo = gds_id, destdir="./", silent = True)
+        gds = GEOparse.get_GEO(geo = gds_id, destdir="./geo_data", silent = True)
         std_gds_df = self.geo_with_gene_id(gds) 
         filtered_gds_df = self.filter_GDS_by_indicator(gds, indicator_col, indicator_value)
         filtered_gds_df = filtered_gds_df.merge(std_gds_df, on=['ID_REF', 'IDENTIFIER'], how='left')
@@ -25,7 +25,7 @@ class GEOProcessor:
         Input: GSM (Sample) ID
         Returns: a pandas dataframe of the GSM dataset with gene IDs and expression values
         """
-        gsm = GEOparse.get_GEO(geo = gsm_id, destdir="./", silent = True)
+        gsm = GEOparse.get_GEO(geo = gsm_id, destdir="./geo_data", silent = True)
         gsm_df = self.geo_with_gene_id(gsm)
         return gsm_df
 
@@ -37,7 +37,7 @@ class GEOProcessor:
         """
         #TODO: Make it smarter, remove all the if elses. Find a way to identify the title of the gene name column in each platform
         platform_column = 'platform_id' if 'platform_id' in geo.metadata else 'platform'
-        platform_df = GEOparse.get_GEO(geo = geo.metadata[platform_column][0], destdir="./", silent = True).table
+        platform_df = GEOparse.get_GEO(geo = geo.metadata[platform_column][0], destdir="./geo_data", silent = True).table
         geo_df = geo.table
         if ('Gene Symbol' in platform_df.columns):
             geo_df['IDENTIFIER'] = geo_df.merge(platform_df, left_on='ID_REF', right_on='ID')['Gene Symbol']
@@ -223,8 +223,8 @@ def main():
 
     # Step 2. Get a reference / control epigenome 
     print("\n Enter 1 or 2. \
-            \n 1. Make an average methylation profile of control samples from a GDS \
-            \n 2. Provide a specific reference GSM")
+            \n 1. Filter a GDS for control samples to create an average methylation profile \
+            \n 2. Choose a single GSM and use its methylation profile")
     reference_choice = int(input())
     while reference_choice != 1 and reference_choice != 2:
         print("Error: Invalid input. Please try again.")
@@ -232,14 +232,14 @@ def main():
 
     # Reference methylation from an average of the control GSMs in a GDS
     if reference_choice == 1:
-        print("\n Enter a GEO Dataset id like GDS5047")
+        print("\n Enter a GEO Dataset ID like GDS5047")
         gds_id = input()
-        gds = GEOparse.get_GEO(geo = gds_id, destdir="./", silent = True)
+        gds = GEOparse.get_GEO(geo = gds_id, destdir="./geo_data", silent = True)
         print('\n Columns for', gds_id, ':\n', gds.columns[0:2])
-        print("\n Choose one as your indicator column. Enter a string like agent or disease state")
+        print("\n Choose one as your indicator column. Simply enter the name of the column you want to filter by.")
         indicator_col = str(input())
         print('\n Here are the values of', gds.columns[indicator_col].unique())
-        print("\n Choose your indicator value. Enter a string like control or uninvolved.")
+        print("\n Choose your indicator value. Ex. Choosing control will filter all non-control patients.")
         indicator_value = str(input())
         filtered_gds = geo_processor.get_filtered_dataset(gds_id, indicator_col, indicator_value)
         ref_values = filtered_gds[['ID_REF', 'IDENTIFIER']].copy()
