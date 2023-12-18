@@ -342,6 +342,7 @@ class EpigeneticDesignAutomation:
 
     def get_target_gsm(self, target_gsm_id):
         """
+        Retrieves the dataset for a specified target GSM ID.
         Output: pandas dataframe of the target GSM
         """
         try:
