@@ -6,16 +6,21 @@ from dataclasses import dataclass
 import copy
 
 class GEOProcessor:
-    """A helper class for TargetFinder that processes GEO data"""
+    """
+    Functionality: A helper class for TargetFinder that processes GEO data
+    """
 
     def __init__(self, data_directory="./geo_data"):
         self.data_directory = data_directory
 
     def get_filtered_dataset(self, gds_id, indicator_col, indicator_value):
         """
-        Retrieves and filters a GEO DataSet (GDS).
-        Input: GDS ID, column to filter, value to filter
-        Returns: a pandas dataframe of the GDS dataset with only the filtered/control samples
+        Retrieves and filters a GEO DataSet (GDS). Commonly used to filter for control samples.
+        Input: 
+        - gds_id: str (GEO DataSet ID)
+        - indicator_col: str (column to filter by)
+        - indicator_value: str (value to filter by)
+        Returns: pandas dataframe (GDS dataset with only the filtered samples)
         """
         gds = GEOparse.get_GEO(geo = gds_id, destdir=self.data_directory, silent = True)
         std_gds_df = self.geo_with_gene_id(gds) 
@@ -26,8 +31,9 @@ class GEOProcessor:
     def get_sample_dataset(self, gsm_id):
         """
         Retrieves a GEO sample dataset.
-        Input: GSM (Sample) ID
-        Returns: a pandas dataframe of the GSM dataset with gene IDs and expression values
+        Input:
+        - gsm_id: str (GEO Sample ID)
+        Output: pandas dataframe (GSM dataset with gene IDs and expression values)
         """
         gsm = GEOparse.get_GEO(geo = gsm_id, destdir=self.data_directory, silent = True)
         gsm_df = self.geo_with_gene_id(gsm)
@@ -36,8 +42,9 @@ class GEOProcessor:
     def geo_with_gene_id(self, geo):
         """
         Parses epigenetic data for standardization; converts probe IDs to gene IDs.
-        Input: a GEOparse object (Sample or Dataset)
-        Returns: a pandas dataframe of the GEO object with gene IDs and expression values
+        Input: 
+        - geo: GEOparse object (GSM or GDS)
+        Output: pandas dataframe of GEO table with gene IDs and expression values
         """
         #TODO: Make it smarter, remove all the if elses. Find a way to identify the title of the gene name column in each platform
         # Maybe possible with GPT3.5 API but could overcomplicate things and cause bad outputs
@@ -56,8 +63,11 @@ class GEOProcessor:
     def filter_GDS_by_indicator(self, gds, indicator_col, indicator_value):
         """
         Filters a GDS dataset based on a specific indicator.
-        Input: GDS object, indicator column, indicator value
-        Returns: a pandas DataFrame with filtered data
+        Inputs:
+        - gds: GEOparse object (GDS)
+        - indicator_col: str (column to filter by)
+        - indicator_value: str (value to filter by)
+        Outputs: pandas DataFrame of filtered data
         """
         indicator = gds.columns
         epigenes = gds.table
@@ -70,17 +80,19 @@ class GEOProcessor:
         return indicated_df
 
 class TargetFinder:
-    """ A class that helps find genes with different methylation levels between populations"""
+    """
+    A class that helps find genes with different methylation levels between populations
+    Input: 
+    - target_gsm_df: pandas dataframe of target GSM
+    - control_gds_df: pandas dataframe of control GDS
+    - genes_of_interest: list of genes of interest
+    Output: dictionary of target genes to methylation status
+    """
 
     def __init__(self):
         pass
 
     def run(self, target_gsm_df, control_gds_df, genes_of_interest):
-        """
-        Identifies target genes based on methylation levels.
-        Input: DataFrames for target sample, control dataset, and list of genes of interest
-        Returns: Dictionary of target genes with methylation status
-        """
         target_gene_to_methylation = {}
         for gene_id in genes_of_interest:
             target_gene_to_methylation[gene_id] = self.assess_gene_methylation(target_gsm_df, control_gds_df, gene_id)
@@ -89,9 +101,12 @@ class TargetFinder:
     
     def assess_gene_methylation(self, target_sample, healthy_dataset, gene_id):
         """
-        Assesses methylation status of a single gene.
-        Input: DataFrames for target sample and control dataset, and a single gene ID
-        Returns: Methylation status ('hypo' or 'hyper') of the gene
+        Assesses methylation status of a single gene. 
+        Input: 
+        - target_sample: pandas dataframe of target GSM
+        - healthy_dataset: pandas dataframe of control GDS
+        - gene_id: str (gene ID)
+        Output: str (methylation status of the gene, 'hypo' or 'hyper')
         """
         sample_gene = target_sample[target_sample['IDENTIFIER'] == gene_id]
         healthy_gene = healthy_dataset[healthy_dataset['IDENTIFIER'] == gene_id]
@@ -113,7 +128,11 @@ class SequenceProcessor:
         pass
 
     def get_promoter_sequence(self, refseq_id):
-        """Attempts to find the promoter sequence of a gene from NCBI given its refseq id"""
+        """
+        Attempts to find the promoter sequence of a gene from NCBI given its refseq id
+        Input: str (refseq id of a gene)
+        Output: str (promoter sequence of the gene)
+        """
         try:
             handle = Entrez.efetch(db="nucleotide", id=refseq_id, rettype="gb", retmode="text")
             record = SeqIO.read(handle, "genbank")
@@ -133,7 +152,8 @@ class SequenceProcessor:
         """
         Searches the forward strand of the promoter sequence for PAM sites with protospacers that have G at position 1 and A/T at position 17
         If none are found, finds protospacers with G at position 20.
-        Input: promoter sequence of a gene
+        Input: 
+        - promoter_seq: str (promoter sequence of a gene)
         Returns: dictionary of PAM sites and their protospacers
         """
         pam_to_protospacer = {}
@@ -169,6 +189,13 @@ class EpigeneticConstruct:
     target_gene_reverse_oligo : str
     
 class OligoDesigner:
+    """
+    Functionality: Designs oligos for epigenetic constructs
+    Inputs:
+    - genes_to_methylation: dictionary of genes to methylation status
+    - target_gsm_df: dataframe of target GSM
+    Outputs: dictionary of genes to list of constructs
+    """
     def __init__(self):
         self.sequence_processor = SequenceProcessor()
 
@@ -199,6 +226,10 @@ class OligoDesigner:
     def run(self, genes_to_methylation, target_gsm_df):
         """
         Design oligos based on methylation status
+        Inputs:
+        - genes_to_methylation: dictionary of genes to methylation status
+        - target_gsm_df: dataframe of target GSM
+        Outputs: dictionary of genes to list of constructs
         """
         target_genes = genes_to_methylation.keys()
         self.target_gsm_df = target_gsm_df
@@ -210,6 +241,10 @@ class OligoDesigner:
     def find_protospacers(self, id_to_seq, chopchop = False):
         """
         Finds potential protospacers in sequences
+        Inputs: 
+        - id_to_seq: dictionary of gene IDs to promoter sequences
+        - chopchop: boolean indicating whether to use chopchop to find protospacers
+        Outputs: dictionary of gene IDs to protospacers
         """
         # Protospacers with G at 0 and A/T at 16
         if chopchop == False:
@@ -226,13 +261,14 @@ class OligoDesigner:
     def find_promoter_sequences(self, target_genes):
         """
         Finds promoter sequences for target genes
+        Inputs: 
+        - target_genes: list of target genes
+        Outputs: dictionary of gene IDs to promoter sequences
         """
         id_to_seq = {}
         for gene_id in target_genes:
             gene_df = self.target_gsm_df[self.target_gsm_df['IDENTIFIER'] == gene_id]
-
             if gene_df.empty:
-                # Log an error and continue to the next gene_id
                 print(f"Error: Gene ID {gene_id} not found in the dataframe.")
                 continue
 
@@ -247,7 +283,12 @@ class OligoDesigner:
 
     def design_oligos(self, constructs, id_to_protospacer, genes_to_methylation): 
         """
-        Design oligos for constructs
+        Designs oligos for constructs
+        Inputs: 
+        - constructs: list of EpigeneticConstruct objects
+        - id_to_protospacer: dictionary of gene IDs to protospacers
+        - genes_to_methylation: dictionary of genes to methylation status
+        Outputs: dictionary of genes to list of constructs
         """
         gene_to_constructs = {}
         for gene, methylation in genes_to_methylation.items():
@@ -278,6 +319,18 @@ class OligoDesigner:
     
 
 class EpigeneticDesignAutomation:
+    """
+    Functionality: Automates the design of epigenetic constructs
+    Inputs:
+    - email: str (email for Entrez)
+    - target_gsm_id: str (GSM ID of the target sample)
+    - reference_geo_id: str (GSM or GDS ID of the reference sample)
+    - genes_of_interest: list or dictionary of genes of interest
+    - indicator_col: str (column to filter reference data by)
+    - indicator_value: str (value to filter reference data by)
+    Outputs: dictionary of genes to list of constructs
+    """
+
     def __init__(self, email):
         Entrez.email = email
         self.geo_processor = GEOProcessor()
@@ -304,6 +357,11 @@ class EpigeneticDesignAutomation:
             raise ValueError(f"Not a valid GSM id: {gsm_id}. Error: {e}")
         
     def get_reference_methylation(self, geo_id, indicator_col = None, indicator_value = None):
+        """
+        Retrieves and processes reference methylation data.
+        Input: geo_id (GSM or GDS), indicator column, indicator value
+        Output: A pandas dataframe of the reference data
+        """
         if geo_id.startswith("GDS"):
             return self.handle_gds_reference(geo_id, indicator_col = indicator_col, indicator_value = indicator_value)
         elif geo_id.startswith("GSM"):
@@ -312,12 +370,26 @@ class EpigeneticDesignAutomation:
             raise ValueError("Invalid GEO ID. Please enter a valid GSM or GDS ID.")
         
     def handle_gds_reference(self, gds_id, indicator_col, indicator_value):
+        """
+        Handles retrieval and processing of GDS data.
+        Inputs:
+        - gds_id: str (GDS ID)
+        - indicator_col: str (column to filter by)
+        - indicator_value: str (value to filter by)
+        Output: A pandas dataframe of the GDS data
+        """
         filtered_gds = self.geo_processor.get_filtered_dataset(gds_id, indicator_col, indicator_value)
         ref_values = filtered_gds[['ID_REF', 'IDENTIFIER']].copy()
         ref_values['VALUE'] = filtered_gds.filter(regex='^GSM').mean(axis=1)
         return ref_values
         
     def handle_gsm_reference(self, reference_gsm_id):
+        """
+        Handles retrieval and processing of GSM data.
+        Input:
+        - reference_gsm_id: str (GSM ID of the reference sample)
+        output: A pandas dataframe of the GSM data
+        """
         reference_gsm = self.geo_processor.get_sample_dataset(reference_gsm_id)
         reference_gsm = reference_gsm[reference_gsm['VALUE'].notna()]
         ref_values = reference_gsm[['ID_REF', 'IDENTIFIER', 'VALUE']].copy()
@@ -325,7 +397,13 @@ class EpigeneticDesignAutomation:
 
     def get_target_genes(self, target_gsm, ref_values, genes_of_interest):
         """
-        Input: Target GSM, reference values, and genes of interest (either as a list or a dict)
+        Creates a dictionary linking genes of interest to their methylation status (hypo/hyper)
+        Input: 
+        - target_gsm: pandas dataframe of the target GSM
+        - ref_values: pandas dataframe of the reference data
+        - genes_of_interest: list or dictionary of genes of interest
+        - indicator_col: str (column to filter reference data by)
+        - indicator_value: value to filter reference data by
         Output: Dictionary of target genes to methylation status
         """
         if isinstance(genes_of_interest, dict):
@@ -337,74 +415,11 @@ class EpigeneticDesignAutomation:
         return genes_to_methylation
     
     def get_constructs(self, genes_to_methylation, target_gsm):
+        """
+        Designs oligos for constructs
+        Input: 
+        - genes_to_methylation: dictionary of genes to methylation status
+        - target_gsm: dataframe of target GSM
+        Output: dictionary of genes to list of constructs
+        """
         return self.oligo_designer.run(genes_to_methylation, target_gsm)
-
-
-class CLI():
-    """Command line interface for EpigeneticDesignAutomation"""
-    def __init__(self):
-        self.eda = EpigeneticDesignAutomation(email="ethanmccoy@example.com")
-
-    def run(self):
-        target_gsm = self.get_target_gsm()
-        ref_values = self.get_reference_methylation()
-        genes_to_methylation = self.get_target_genes(target_gsm, ref_values)
-        constructs = self.get_constructs(genes_to_methylation, target_gsm)
-
-        return constructs
-
-    def get_target_gsm(self):
-        """
-        Gets a target GSM from user input
-        Returns a pandas dataframe of the target GSM
-        """
-        while True:
-            target_gsm_id = input("\nEnter a target GSM id like GSM1324896: ")
-            try:
-                return self.eda.get_target_gsm(target_gsm_id)
-            except ValueError as e:
-                print(e)
-
-    def get_reference_methylation(self):
-        """
-        Entering a GDS ID will filter the GDS for control samples to create an average methylation profile
-        Entering a GSM ID will use its methylation profile
-        """
-        geo_id = input("Enter a GEO ID (GSM or GDS) like GSM1324896 or GDS5047: ")
-        if geo_id.startswith("GDS"):
-            return self.get_gds_reference_methylation(geo_id)
-        elif geo_id.startswith("GSM"):
-            return self.eda.handle_gsm_reference(geo_id)
-        else:
-            print("Invalid GEO ID. Please enter a valid GSM or GDS ID.")
-
-    def get_gds_reference_methylation(self, gds_id):
-        indicator_col = input("Enter the indicator column name: ")
-        indicator_value = input("Enter the indicator value: ")
-        return self.eda.get_reference_methylation(gds_id, indicator_col, indicator_value)
-    
-    def get_target_genes(self, target_gsm, ref_values):
-        """
-        Interacts with the user to get target genes.
-        Returns a dictionary of target genes to methylation status.
-        """
-        print("Enter a list or a dict w/ known methylation status"
-                "\nDict Example: {'ID4': 'hyper', 'CDKN2B': 'hypo', etc.}"
-                "\nList Example: ['ID4', 'CDKN2B', 'CDKN1A', 'CDKN2A']")
-        genes_of_interest = eval(input())
-        return self.eda.get_target_genes(target_gsm, ref_values, genes_of_interest)
-    
-    def get_constructs(self, genes_to_methylation, target_gsm):
-        return self.eda.get_constructs(genes_to_methylation, target_gsm)
-
-# TODO: Add pickling and file management
-def main():
-    #cli = CLI()
-    #constructs = cli.run()
-    #print(constructs)
-    print('')
-
-
-if __name__ == '__main__':
-    main()
-
