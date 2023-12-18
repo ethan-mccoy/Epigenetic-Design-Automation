@@ -9,12 +9,16 @@ import copy
 class GEOProcessor:
     """A helper class for TargetFinder that processes GEO data"""
 
+    def __init__(self, data_directory="./geo_data"):
+        self.data_directory = data_directory
+
     def get_filtered_dataset(self, gds_id, indicator_col, indicator_value):
         """
+        Retrieves and filters a GEO DataSet (GDS).
         Input: GDS ID, column to filter, value to filter
         Returns: a pandas dataframe of the GDS dataset with only the filtered/control samples
         """
-        gds = GEOparse.get_GEO(geo = gds_id, destdir="./geo_data", silent = True)
+        gds = GEOparse.get_GEO(geo = gds_id, destdir=self.data_directory, silent = True)
         std_gds_df = self.geo_with_gene_id(gds) 
         filtered_gds_df = self.filter_GDS_by_indicator(gds, indicator_col, indicator_value)
         filtered_gds_df = filtered_gds_df.merge(std_gds_df, on=['ID_REF', 'IDENTIFIER'], how='left')
@@ -22,16 +26,17 @@ class GEOProcessor:
     
     def get_sample_dataset(self, gsm_id):
         """
+        Retrieves a GEO sample dataset.
         Input: GSM (Sample) ID
         Returns: a pandas dataframe of the GSM dataset with gene IDs and expression values
         """
-        gsm = GEOparse.get_GEO(geo = gsm_id, destdir="./geo_data", silent = True)
+        gsm = GEOparse.get_GEO(geo = gsm_id, destdir=self.data_directory, silent = True)
         gsm_df = self.geo_with_gene_id(gsm)
         return gsm_df
 
     def geo_with_gene_id(self, geo):
         """
-        Parses epigenetic data for standardization across datasets; finds the GEO's platform, converts probe IDs to gene IDs
+        Parses epigenetic data for standardization; converts probe IDs to gene IDs.
         Input: a GEOparse object (Sample or Dataset)
         Returns: a pandas dataframe of the GEO object with gene IDs and expression values
         """
@@ -50,6 +55,11 @@ class GEOProcessor:
         return geo_df
 
     def filter_GDS_by_indicator(self, gds, indicator_col, indicator_value):
+        """
+        Filters a GDS dataset based on a specific indicator.
+        Input: GDS object, indicator column, indicator value
+        Returns: a pandas DataFrame with filtered data
+        """
         indicator = gds.columns
         epigenes = gds.table
         gsm_to_indicator = dict(zip(indicator.index, indicator[indicator_col]))
@@ -62,27 +72,79 @@ class GEOProcessor:
 
 class TargetFinder:
     """ A class that helps find genes with different methylation levels between populations"""
+
+    def __init__(self):
+        pass
+
     def run(self, target_gsm_df, control_gds_df, genes_of_interest):
-        targets = self.find_targets(target_gsm_df, control_gds_df, genes_of_interest)
-        return targets
-    
-    def find_targets(self, target_sample, healthy_dataset, genes_of_interest):
+        """
+        Identifies target genes based on methylation levels.
+        Input: DataFrames for target sample, control dataset, and list of genes of interest
+        Returns: Dictionary of target genes with methylation status
+        """
         target_gene_to_methylation = {}
         for gene_id in genes_of_interest:
-            sample_gene = target_sample[target_sample['IDENTIFIER'] == gene_id]
-            healthy_gene = healthy_dataset[healthy_dataset['IDENTIFIER'] == gene_id]
+            target_gene_to_methylation[gene_id] = self.assess_gene_methylation(target_gsm_df, control_gds_df, gene_id)
 
-            for i in range(len(sample_gene)):
-                healthy_mean = healthy_gene.iloc[i, 2:].mean().mean()
-                sample_value = sample_gene['VALUE'].iloc[i]
-                # If greater than 10 % difference add to list
-                percent_difference = abs((sample_value - healthy_mean) / healthy_mean) * 100
-                if percent_difference > 10:
-                    if sample_value > healthy_mean:
-                        target_gene_to_methylation[gene_id] = 'hypo'
-                    else:
-                        target_gene_to_methylation[gene_id] = 'hyper'
         return target_gene_to_methylation
+    
+    def assess_gene_methylation(self, target_sample, healthy_dataset, gene_id):
+        """
+        Assesses methylation status of a single gene.
+        Input: DataFrames for target sample and control dataset, and a single gene ID
+        Returns: Methylation status ('hypo' or 'hyper') of the gene
+        """
+        sample_gene = target_sample[target_sample['IDENTIFIER'] == gene_id]
+        healthy_gene = healthy_dataset[healthy_dataset['IDENTIFIER'] == gene_id]
+
+        for i in range(len(sample_gene)):
+            healthy_mean = healthy_gene.iloc[i, 2:].mean()
+            sample_value = sample_gene['VALUE'].iloc[i]
+            percent_difference = abs((sample_value - healthy_mean) / healthy_mean) * 100
+
+            if percent_difference > 10:
+                return 'hypo' if sample_value < healthy_mean else 'hyper'
+
+        return None
+    
+class SequenceProcessor:
+    """A class that helps process DNA sequences"""
+
+    def __init__(self):
+        pass
+
+    def get_promoter_sequence(self, refseq_id):
+        """Attempts to find the promoter sequence of a gene from NCBI given its refseq id"""
+        try:
+            handle = Entrez.efetch(db="nucleotide", id=refseq_id, rettype="gb", retmode="text")
+            record = SeqIO.read(handle, "genbank")
+            handle.close()
+            promoter_end_pos = 300 # Default if no CDS listed
+            for feature in record.features:
+                if feature.type == "CDS":
+                    promoter_end_pos = feature.location.start
+            seq = record.seq
+            promoter_seq = seq[0 : promoter_end_pos]
+            return promoter_seq
+        except Exception as e:
+            print(f"Error fetching sequence for {refseq_id}: {str(e)}")
+            return None
+
+    def find_protospacers(self, promoter_seq):
+        """
+        Searches the forward strand of the promoter sequence for PAM sites with protospacers that have G at position 0 and A/T at position 16
+        Input: promoter sequence of a gene
+        Returns: dictionary of PAM sites and their protospacers
+        """
+        pam_to_protospacer = {}
+        for i in range(20, len(promoter_seq) - 2):
+            if promoter_seq[i+2:i+3] == 'G' and promoter_seq[i+1:i+2] == 'G':
+                protospacer = promoter_seq[i-20:i]
+                protospacer = str(protospacer) # Removes seq object
+                if protospacer[0] == 'G' and (protospacer[16] == 'A' or protospacer[16] == 'T'):
+                    pam_to_protospacer[i] = protospacer.lower()
+        return pam_to_protospacer
+
 
 @dataclass()
 class EpigeneticConstruct:
@@ -104,6 +166,8 @@ class OligoDesigner:
         DNMT3A = EpigeneticConstruct('pdCas9-DNMT3A-EGFP', 'hyper', True, ['XbaI', 'Acc65I', 'KpnI'], ['AarI', 'AgeI'], '', '', '')
         MQ1 = EpigeneticConstruct('pcDNA3.1-dCas9-MQ1(Q147L)-EGFP', 'hyper', False, ['EcoRV', 'NotI', 'XbaI'], [], '', '', '')
         self.constructs = [Tet1, p300, DNMT3A, MQ1]
+
+        #TODO: find online database of common restriction sites, add as txt file, read in as dict
         self.restriction_sites = {
             'EcoRI': 'GAATTC',
             'BamHI': 'GGATCC',
@@ -122,6 +186,9 @@ class OligoDesigner:
         }
 
     def run(self, genes_to_methylation, target_gsm_df):
+        """
+        Design oligos based on methylation status
+        """
         target_genes = genes_to_methylation.keys()
         self.target_gsm_df = target_gsm_df
         id_to_seq = self.find_promoter_sequences(target_genes)
@@ -129,6 +196,9 @@ class OligoDesigner:
         self.design_oligos(self.constructs, id_to_protospacer, genes_to_methylation)
 
     def find_protospacers(self, id_to_seq, chopchop = False):
+        """
+        Finds potential protospacers in sequences
+        """
         # Protospacers with G at 0 and A/T at 16
         if chopchop == False:
             sp = SequenceProcessor()
@@ -143,6 +213,9 @@ class OligoDesigner:
                 #TODO: Set up chopchop cmd line tool, many dependences
 
     def find_promoter_sequences(self, target_genes):
+        """
+        Finds promoter sequences for target genes
+        """
         sp = SequenceProcessor()
         id_to_seq = {}
         for gene_id in target_genes:
@@ -156,6 +229,9 @@ class OligoDesigner:
         return id_to_seq
 
     def design_oligos(self, constructs, id_to_protospacer, genes_to_methylation): 
+        """
+        Design oligos for constructs
+        """
         gene_to_constructs = {}
         for gene, methylation in genes_to_methylation.items():
             for construct in constructs:
@@ -176,35 +252,6 @@ class OligoDesigner:
                         gene_to_constructs[gene] = []
                     gene_to_constructs[gene].append(gene_construct)
         return gene_to_constructs
-
-class SequenceProcessor:
-    def get_promoter_sequence(self, refseq_id):
-        """Attempts to find the promoter sequence of a gene from NCBI given its refseq id"""
-        try:
-            handle = Entrez.efetch(db="nucleotide", id=refseq_id, rettype="gb", retmode="text")
-            record = SeqIO.read(handle, "genbank")
-            handle.close()
-            promoter_end_pos = 300 # Default if no CDS listed
-            for feature in record.features:
-                if feature.type == "CDS":
-                    promoter_end_pos = feature.location.start
-            seq = record.seq
-            promoter_seq = seq[0 : promoter_end_pos]
-            return promoter_seq
-        except Exception as e:
-            print(f"Error fetching sequence for {refseq_id}: {str(e)}")
-            return None
-
-    def find_protospacers(self, promoter_seq):
-        # Search for PAM sites on forward strand of promoter
-        pam_sites = {}
-        for i in range(20, len(promoter_seq) - 2):
-            if promoter_seq[i+2:i+3] == 'G' and promoter_seq[i+1:i+2] == 'G':
-                protospacer = promoter_seq[i-20:i]
-                protospacer = str(protospacer) # Removes seq object
-                if protospacer[0] == 'G' and (protospacer[16] == 'A' or protospacer[16] == 'T'):
-                    pam_sites[i] = protospacer.lower()
-        return pam_sites
     
 
 class CLI():
@@ -224,6 +271,10 @@ class CLI():
         return constructs
 
     def get_target_gsm(self):
+        """
+        Gets a target GSM from user input
+        Returns a pandas dataframe of the target GSM
+        """
         while True:
             try: 
                 target_gsm_id = input("\n Enter a target GSM id like GSM1324896: ")
@@ -234,6 +285,12 @@ class CLI():
         return target_gsm
     
     def get_reference_methylation(self):
+        """
+        Gets reference methylation from user input
+        Returns a pandas dataframe of the reference methylation
+        """
+
+        # TODO: Make this automatically see if it's a GDS or GSM
         print("\n Enter 1 or 2. \
                 \n 1. Filter a GDS for control samples to create an average methylation profile \
                 \n 2. Choose a single GSM and use its methylation profile")
@@ -269,10 +326,13 @@ class CLI():
             ref_values = reference_gsm[['ID_REF', 'IDENTIFIER', 'VALUE']].copy()
 
         return ref_values
-    
-
 
     def get_target_genes(self, target_gsm, ref_values):
+        """
+        Gets target genes from user input
+        Returns a dictionary of target genes to methylation status
+        """
+
         print("Choose how to find target genes \
                 \n 1. Manually input your target genes \
                 \n 2. Find potential genes of interest via differential methylation analysis on the reference and target epigenomes") 
