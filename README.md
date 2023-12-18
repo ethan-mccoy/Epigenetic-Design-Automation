@@ -12,7 +12,7 @@ cli.py is a command line interface to play around with
 
 tests.py contains some tests on GEO DataSets of psoriasis lesions and cocaine addicted brains
 
-Tests output:
+# Tests output:
 
 Test results for Psoriasis test:
 
