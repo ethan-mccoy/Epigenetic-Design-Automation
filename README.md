@@ -18,7 +18,8 @@ Test results for Psoriasis test:
 
 ID4
 
-- plasmid: pdCas9-DNMT3A-EGFP
+plasmid: pdCas9-DNMT3A-EGFP
+
 - restriction site: XbaI
 - forward oligo: ataatTCTAGA{49: 'gaacagcaatgggctcagac', 256: 'gttcccagttcctaaattcc'}
 - reverse oligo: ataatTCTAGA
@@ -31,7 +32,8 @@ plasmid: pcDNA3.1-dCas9-MQ1(Q147L)-EGFP
 
 CDKN2B
 
-- plasmid: pdCas9-Tet1-CD
+plasmid: pdCas9-Tet1-CD
+
 - restriction site: Acc65I
 - forward oligo: ataatGGTACC{75: 'ggccagagcggctttgagct', 272: 'gagagtgcgccggagcagcg', 304: 'gaagagtgtcgttaagttta', 314: 'gttaagtttacggccaacgg'}gtttaagagctatgctggaaacagcatagcaagtttaaataaggctagtccgttatcaacttgaaaaagtggcaccgagtcggtgcttttttt
 - reverse oligo: ataatGGTACC
