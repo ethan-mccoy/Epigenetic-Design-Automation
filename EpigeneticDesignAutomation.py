@@ -6,6 +6,19 @@ from dataclasses import dataclass
 from typing import List
 import copy
 
+
+@dataclass(frozen=True)
+class GEOData:
+    """
+    TODO: Use this class to adapt GEOProcessor for function/model pattern and simplify the code
+    """
+    is_dataset = bool # True if GDS, False if GSM
+    id = str # GSM or GDS ID
+    table = pd.DataFrame # Table of data
+    platform = str # Platform ID
+    standardized_table = pd.DataFrame # Table of data with platform probe IDs converted to gene IDs
+    filtered_by = tuple(str, str) # (column, value) tuple of column and value to filter by
+
 class GEOProcessor:
     """
     Functionality: A helper class for TargetFinder that processes GEO data
@@ -116,6 +129,16 @@ class TargetFinder:
                 return 'hypo' if target_value < control_mean else 'hyper'
         return None
     
+
+@dataclass(frozen=True)
+class Gene:
+    """TODO: Use this class to adapt TargetFinder for function/model pattern"""
+    refseq_id: str
+    gene_id: str
+    seq = str
+    promoter_seq = str
+    pam_to_protospacer = dict
+
 class SequenceProcessor:
     """A class that helps process DNA sequences"""
 
@@ -336,8 +359,8 @@ class EpigeneticDesignAutomation:
         target_gsm = self.get_target_gsm(target_gsm_id)
         ref_values = self.get_reference_methylation(reference_geo_id, indicator_col, indicator_value)
         genes_to_methylation = self.get_target_genes(target_gsm, ref_values, genes_of_interest)
-        gene_to_constructs = self.get_constructs(genes_to_methylation, target_gsm)
-
+        gene_to_constructs = self.oligo_designer.run(genes_to_methylation, target_gsm)
+        
         return gene_to_constructs
 
     def get_target_gsm(self, target_gsm_id):
@@ -397,12 +420,3 @@ class EpigeneticDesignAutomation:
         else:
             raise ValueError("genes_of_interest must be a list or a dictionary.")
         return genes_to_methylation
-    
-    def get_constructs(self, genes_to_methylation, target_gsm):
-        """
-        Designs oligos for constructs
-        Input: 
-        - genes_to_methylation: dictionary of genes to methylation status
-        Output: dictionary of genes to list of constructs
-        """
-        return self.oligo_designer.run(genes_to_methylation, target_gsm)
