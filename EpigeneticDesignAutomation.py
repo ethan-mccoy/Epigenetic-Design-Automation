@@ -132,7 +132,7 @@ class TargetFinder:
 
 @dataclass(frozen=True)
 class Gene:
-    """TODO: Use this class to adapt TargetFinder for function/model pattern"""
+    """TODO: Use this class to adapt SequenceProcessor for function/model pattern"""
     refseq_id: str
     gene_id: str
     seq = str
